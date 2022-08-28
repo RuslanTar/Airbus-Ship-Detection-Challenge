@@ -19,7 +19,7 @@ The data for training contains 192,556 768*768 images. I use a module called Ima
 
 ### Model
 
-![](imgs/u-net architecture.png)
+<img src="./imgs/u-net architecture.png">
 
 This deep neural network is implemented with Keras functional API, which makes it extremely easy to experiment with different interesting architectures.
 
@@ -41,7 +41,8 @@ Loss function for the training is dice loss function.
 3. Install dependencies
 
 `pip install -r requirements.txt`
-This tutorial depends on the following libraries:
+
+This project depends on the following libraries:
 
 - Tensorflow: v2.9.1
 - Tensorflow_gpu: v2.9.1
@@ -56,11 +57,17 @@ Also, this code should be compatible with Python versions 3.7–3.10.
 
 ### Train model
 #### Run model_training.py
+
 You can adjust model parameters by changing constants in the beginning of the file.
+
 ### Inference model
+
 #### Run model_inference.py
+
 You can adjust model parameters such as the path to the weights of the pretrained model, the path to the images to be predicted, etc. by changing constants in the beginning of the file.
 
 ## Results
-Use the trained model to do segmentation on test images, the result is satisfactory.
-![](imgs/validation.png)
+
+Use the trained model to do segmentation on test images.
+
+![](./imgs/validation.png)
