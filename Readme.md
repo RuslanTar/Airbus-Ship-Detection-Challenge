@@ -4,14 +4,24 @@
 
 ### System
 OS: Windows 11 21H2
+
 CPU: Intel Core i5-8400
+
 GPU: Nvidia GTX 1080 Ti 11GB
+
 RAM: 16 GB (+32GB virtual RAM)
 
 ### Data
 
 The data is available on the [Kaggle website](https://www.kaggle.com/competitions/airbus-ship-detection/data).
-You can find it in folder airbus-ship-detection
+
+You can download it in folder
+
++ airbus-ship-detection/
+
+  + test_v2 
+
+  + train_v2
 
 ### Data augmentation
 
@@ -28,6 +38,7 @@ Sigmoid activation function makes sure that mask pixels are in [0, 1] range.
 ### Training
 
 The model train up to 10 passes of 100 epochs (with early stopping callbacks).
+
 After training, calculated dice coefficient is about 0.47.
 
 Loss function for the training is dice loss function.
@@ -56,6 +67,7 @@ This project depends on the following libraries:
 Also, this code should be compatible with Python versions 3.7–3.10.
 
 ### Train model
+
 #### Run model_training.py
 
 You can adjust model parameters by changing constants in the beginning of the file.
