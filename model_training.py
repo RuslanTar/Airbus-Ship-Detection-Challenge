@@ -1,4 +1,6 @@
 import os
+import argparse
+import logging
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -16,38 +18,38 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import gc
 
 gc.enable()  # memory is tight
-print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
-# Model Parameters
-
-# Max batch size= available GPU memory bytes / 4 / (size of tensors + trainable parameters)
-BATCH_SIZE = 16
-MODEL_MODE = 'TRAIN'
-WEIGHT_PATH = 'seg_model_weights.best.hdf5'
-EDGE_CROP = 16
-GAUSSIAN_NOISE = 0.1
-UPSAMPLE_MODE = 'SIMPLE'
-# downsampling inside the network
-NET_SCALING = (1, 1)
-# downsampling in preprocessing
-IMG_SCALING = (2, 2)  # (3, 3)
-# number of validation images to use
-VALID_IMG_COUNT = 1500
-# maximum number of steps_per_epoch in training
-MAX_TRAIN_STEPS = 50
-MAX_TRAIN_EPOCHS = 100
-# brightness can be problematic since it seems to change the labels differently from the images
-AUGMENT_BRIGHTNESS = False
-PATH = './'
-TRAIN = './airbus-ship-detection/train_v2/'
-TEST = './airbus-ship-detection/test_v2/'
-SEGMENTATION = './airbus-ship-detection/train_ship_segmentations_v2.csv'
 # corrupted images
 exclude_list = ['6384c3e78.jpg']
+
+args = None
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser.add_argument('--epochs', '-e', metavar='E', type=int, default=100, help='Number of epochs')
+    parser.add_argument('--steps', '-t', type=int, default=30, help='Maximum number of steps_per_epoch in training')
+    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
+    parser.add_argument('--load', '-f', type=str, default=False, help='Load model weights from a .hdf5 file')
+    parser.add_argument('--validation', '-v', dest='val', type=float, default=20.0,
+                        help='Percent of the data that is used as validation (0-100)')
+    parser.add_argument('--net-scale', '-n', dest='net_scaling', type=float, default=1,
+                        help='Downsampling inside the network')
+    parser.add_argument('--img-scale', '-s', dest='img_scaling', type=float, default=0.5,
+                        help='Downsampling in preprocessing')
+    parser.add_argument('--val-imgs', '-i', dest='valid_img_count', type=int, default=1500,
+                        help='Number of validation images to use')
+    parser.add_argument('--train', type=str, default='./airbus-ship-detection/train_v2/', help='Path to train folder')
+    parser.add_argument('--test', type=str, default='./airbus-ship-detection/test_v2/', help='Path to test folder')
+    parser.add_argument('--segmentation', type=str, default='./airbus-ship-detection/train_ship_segmentations_v2.csv',
+                        help='Path to train_ship_segmentations_v2.csv file')
+
+    return parser.parse_args()
 
 
 # RLE (Run-Length Encode and Decode)
 # ref: https://www.kaggle.com/paulorzp/run-length-encode-and-decode
+
 
 def multi_rle_encode(img, **kwargs):
     """
@@ -113,19 +115,19 @@ def masks_as_color(in_mask_list, shape=(768, 768)):
 
 # Split into training and validation groups
 
-def make_image_gen(in_df, batch_size=BATCH_SIZE):
+def make_image_gen(in_df, path, batch_size, img_scaling):
     all_batches = list(in_df.groupby('ImageId'))
     out_rgb = []
     out_mask = []
     while True:
         np.random.shuffle(all_batches)
         for c_img_id, c_masks in all_batches:
-            rgb_path = os.path.join(TRAIN, c_img_id)
+            rgb_path = os.path.join(path, c_img_id)
             c_img = imread(rgb_path)
             c_mask = np.expand_dims(masks_as_image(c_masks['EncodedPixels'].values), -1)
-            if IMG_SCALING is not None:
-                c_img = c_img[::IMG_SCALING[0], ::IMG_SCALING[1]]
-                c_mask = c_mask[::IMG_SCALING[0], ::IMG_SCALING[1]]
+            if img_scaling is not None:
+                c_img = c_img[::img_scaling[0], ::img_scaling[1]]
+                c_mask = c_mask[::img_scaling[0], ::img_scaling[1]]
             out_rgb += [c_img]
             out_mask += [c_mask]
             if len(out_rgb) >= batch_size:
@@ -133,8 +135,8 @@ def make_image_gen(in_df, batch_size=BATCH_SIZE):
                 out_rgb, out_mask = [], []
 
 
-def create_dataframes():
-    masks = pd.read_csv(SEGMENTATION)
+def create_dataframes(segmentation_path, train_path, batch_size, test_size, valid_img_count, img_scaling):
+    masks = pd.read_csv(segmentation_path)
 
     # Drop all corrupted images
     masks.drop(index=masks[masks["ImageId"].isin(exclude_list)].index, inplace=True)
@@ -152,15 +154,14 @@ def create_dataframes():
     balanced_train_df['ships'].hist(bins=balanced_train_df['ships'].max() + 1)
 
     train_ids, valid_ids = train_test_split(balanced_train_df,
-                                            test_size=0.2,
+                                            test_size=test_size / 100,
                                             stratify=balanced_train_df['ships'])
     train_df = pd.merge(masks, train_ids)
     valid_df = pd.merge(masks, valid_ids)
 
-    train_gen = make_image_gen(train_df)
-    train_x, train_y = next(train_gen)
+    train_x, train_y = next(make_image_gen(train_df, train_path, batch_size, img_scaling))
 
-    valid_x, valid_y = next(make_image_gen(valid_df, VALID_IMG_COUNT))
+    valid_x, valid_y = next(make_image_gen(valid_df, train_path, valid_img_count, img_scaling))
     gc.collect()
 
     return train_df, train_x, train_y, valid_x, valid_y
@@ -183,12 +184,7 @@ def setup_augment_params(featurewise_center=False, samplewise_center=False, rota
                    data_format=data_format)
     global image_gen, label_gen
 
-    if AUGMENT_BRIGHTNESS:
-        dg_args['brightness_range'] = [0.5, 1.5]
     image_gen = ImageDataGenerator(**dg_args)
-
-    if AUGMENT_BRIGHTNESS:
-        dg_args.pop('brightness_range')
     label_gen = ImageDataGenerator(**dg_args)
 
 
@@ -211,25 +207,20 @@ def create_aug_gen(in_gen, seed=42, **kwargs):
 
 
 # Build U-Net model
-def build_model(input_shape=(768, 768)):
-    def upsample_conv(filters, kernel_size, strides, padding):
-        return layers.Conv2DTranspose(filters, kernel_size, strides=strides, padding=padding)
+def build_model(net_scaling, input_shape=(768, 768)):
 
     def upsample_simple(filters, kernel_size, strides, padding):
         return layers.UpSampling2D(strides)
 
-    if UPSAMPLE_MODE == 'DECONV':
-        upsample = upsample_conv
-    else:
-        upsample = upsample_simple
+    upsample = upsample_simple
 
     input_img = layers.Input(input_shape, name='RGB_Input')
     pp_in_layer = input_img
 
-    if NET_SCALING is not None:
-        pp_in_layer = layers.AvgPool2D(NET_SCALING)(pp_in_layer)
+    if net_scaling is not None:
+        pp_in_layer = layers.AvgPool2D(net_scaling)(pp_in_layer)
 
-    pp_in_layer = layers.GaussianNoise(GAUSSIAN_NOISE)(pp_in_layer)
+    pp_in_layer = layers.GaussianNoise(0.1)(pp_in_layer)
     pp_in_layer = layers.BatchNormalization()(pp_in_layer)
 
     c1 = layers.Conv2D(8, (3, 3), activation='relu', padding='same')(pp_in_layer)
@@ -275,8 +266,8 @@ def build_model(input_shape=(768, 768)):
 
     # d = layers.Cropping2D((EDGE_CROP, EDGE_CROP))(d)
     # d = layers.ZeroPadding2D((EDGE_CROP, EDGE_CROP))(d)
-    if NET_SCALING is not None:
-        d = layers.UpSampling2D(NET_SCALING)(d)
+    if net_scaling is not None:
+        d = layers.UpSampling2D(net_scaling)(d)
 
     seg_model = models.Model(inputs=[input_img], outputs=[d])
     return seg_model
@@ -322,7 +313,7 @@ def dice_coef(mask1, mask2):
 def get_callbacks_list():
     from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 
-    checkpoint = ModelCheckpoint(WEIGHT_PATH, monitor='val_loss', verbose=1,
+    checkpoint = ModelCheckpoint('./seg_model_weights.best.hdf5', monitor='val_loss', verbose=1,
                                  save_best_only=True, mode='min', save_weights_only=True)
 
     reduceLROnPlat = ReduceLROnPlateau(monitor='val_loss', factor=0.33,
@@ -336,14 +327,14 @@ def get_callbacks_list():
     return callbacks_list
 
 
-def fit(model, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list):
+def fit(model, batch_size, epochs, steps, train_path, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list):
     model.compile(optimizer=Adam(1e-3, decay=1e-6), loss=loss_func, metrics=metrics)
 
-    step_count = min(MAX_TRAIN_STEPS, train_df.shape[0] // BATCH_SIZE)
-    aug_gen = create_aug_gen(make_image_gen(train_df))
+    step_count = min(steps, train_df.shape[0] // batch_size)
+    aug_gen = create_aug_gen(make_image_gen(train_df, train_path, batch_size, img_scaling))
     loss_history = [model.fit(aug_gen,
                               steps_per_epoch=step_count,
-                              epochs=MAX_TRAIN_EPOCHS,
+                              epochs=epochs,
                               validation_data=(valid_x, valid_y),
                               callbacks=callbacks_list,
                               workers=1  # the generator is not thread safe
@@ -351,29 +342,11 @@ def fit(model, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list):
     return loss_history
 
 
-def train_model(model, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list):
-    pass_num = 1
-    while True:
-        loss_history = fit(model, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list)
-
-        if np.min([mh.history['val_loss'] for mh in loss_history]) < 0.2 or pass_num >= 10:
-            break
-        pass_num += 1
-
-    model.save('seg_model.h5')
-    gc.collect()
-
-
-def load_weights(model, path=WEIGHT_PATH):
-    model.load_weights(path)
-    model.compile(optimizer=Adam(1e-3, decay=1e-6), loss=loss_func, metrics=metrics)
-
-
-def raw_prediction(model, c_img_name, path=TEST):
+def raw_prediction(model, c_img_name, path, img_scaling=None):
     c_img = imread(os.path.join(path, c_img_name))
     c_img = np.expand_dims(c_img, 0) / 255.0
-    if IMG_SCALING is not None:
-        c_img = c_img[:, ::IMG_SCALING[0], ::IMG_SCALING[1]]
+    if img_scaling is not None:
+        c_img = c_img[:, ::img_scaling[0], ::img_scaling[1]]
     cur_seg = model.predict(c_img)[0]
     return cur_seg, c_img[0]
 
@@ -382,19 +355,18 @@ def smooth(cur_seg):
     return binary_opening(cur_seg > 0.99, np.expand_dims(disk(2), -1))
 
 
-def valid_image(model, valid_df):
+def valid_image(model, valid_df, train_path, img_scaling):
     # Get a sample of each group of ship count
     samples = valid_df.groupby('ships').apply(lambda x: x.sample(1))
     fig, m_axs = plt.subplots(samples.shape[0], 4, figsize=(15, samples.shape[0] * 4))
     [c_ax.axis('off') for c_ax in m_axs.flatten()]
 
     for (ax1, ax2, ax3, ax4), c_img_name in zip(m_axs, samples.ImageId.values):
-        first_seg, first_img = raw_prediction(model, c_img_name, TRAIN)
+        first_seg, first_img = raw_prediction(model, c_img_name, train_path, img_scaling)
         ax1.imshow(first_img)
         ax1.set_title('Image: ' + c_img_name)
         ax2.imshow(first_seg[:, :, 0], cmap=get_cmap('jet'))
         ax2.set_title('Model Prediction')
-        # print(first_seg[::2, ::2].shape[:2])
         reencoded = masks_as_color(multi_rle_encode(smooth(first_seg)[:, :, 0]), shape=first_seg.shape[:2])
         ax3.imshow(reencoded)
         ax3.set_title('Prediction Masks')
@@ -415,18 +387,55 @@ def DICE_COEF(mask1, mask2):
     return dice
 
 
+def scale_to_tuple(scale):
+    scale = int(round(1 / scale))
+    return (scale, scale)
+
 if __name__ == '__main__':
-    train_df, train_x, train_y, valid_x, valid_y = create_dataframes()
-    print(train_df.shape)
-    seg_model = build_model(input_shape=train_x.shape[1:])
+    args = get_args()
+
+    # downsampling in preprocessing
+    img_scaling = scale_to_tuple(args.img_scaling)
+    net_scaling = scale_to_tuple(args.net_scaling)
+
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logging.info(f"Num GPUs Available: {len(tf.config.list_physical_devices('GPU'))}")
+
+    logging.info("Reading data ...")
+    train_df, train_x, train_y, valid_x, valid_y = create_dataframes(args.segmentation, args.train, args.batch_size,
+                                                                     args.val, args.valid_img_count, img_scaling)
+
+    logging.info("Building model ...")
+    seg_model = build_model(args.net_scaling, input_shape=train_x.shape[1:])
     loss_func = DiceLoss()
     metrics = [IoU, 'binary_accuracy', dice_coef]
     callbacks_list = get_callbacks_list()
-    if MODEL_MODE == 'TRAIN':
-        train_model(seg_model, train_df, valid_x, valid_y, loss_func, metrics, callbacks_list)
+    if args.load:
+        seg_model.load_weights(args.load)
+        seg_model.compile(optimizer=Adam(1e-3, decay=1e-6), loss=loss_func, metrics=metrics)
+        logging.info(f'Model loaded from {args.load}')
+        
     else:
-        load_weights(seg_model)
-    valid_image(seg_model, train_df)
+        logging.info(f'''Starting training:
+                Epochs:          {args.epochs}
+                Batch size:      {args.batch_size}
+                Steps per epoch: {args.steps}
+                Training size:   {train_df.shape[0]}
+                Validation size: {valid_x.shape[0]}
+                Images scaling:  {args.img_scaling}
+            ''')
+
+        pass_num = 1
+        while True:
+            loss_history = fit(seg_model, args.batch_size, args.epochs, args.steps, args.train, train_df,
+                               valid_x, valid_y, loss_func, metrics, callbacks_list)
+
+            if np.min([mh.history['val_loss'] for mh in loss_history]) < 0.2 or pass_num >= 10:
+                break
+            pass_num += 1
+
+        # seg_model.save('seg_model.h5')
+        gc.collect()
 
     y_pred = seg_model.predict(valid_x)
-    print(f"Dice score: {DICE_COEF(valid_y, y_pred)}")
+    logging.info(f"Dice score: {DICE_COEF(valid_y, y_pred)}")

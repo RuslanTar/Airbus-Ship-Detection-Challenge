@@ -68,15 +68,71 @@ Also, this code should be compatible with Python versions 3.7–3.10.
 
 ### Train model
 
-#### Run model_training.py
+```console
+> python model_training.py -h
+usage: model_training.py [-h] [--epochs E] [--steps STEPS] [--batch-size B] [--load LOAD] [--validation VAL]
+                         [--net-scale NET_SCALING] [--img-scale IMG_SCALING] [--val-imgs VALID_IMG_COUNT]
+                         [--train TRAIN] [--test TEST] [--segmentation SEGMENTATION]
 
-You can adjust model parameters by changing constants in the beginning of the file.
+Train the UNet on images and target masks
+
+options:
+  -h, --help            show this help message and exit
+  --epochs E, -e E      Number of epochs
+  --steps STEPS, -t STEPS
+                        Maximum number of steps_per_epoch in training
+  --batch-size B, -b B  Batch size
+  --load LOAD, -f LOAD  Load model weights from a .hdf5 file
+  --validation VAL, -v VAL
+                        Percent of the data that is used as validation (0-100)
+  --net-scale NET_SCALING, -n NET_SCALING
+                        Downsampling inside the network
+  --img-scale IMG_SCALING, -s IMG_SCALING
+                        Downsampling in preprocessing
+  --val-imgs VALID_IMG_COUNT, -i VALID_IMG_COUNT
+                        Number of validation images to use
+  --train TRAIN         Path to train folder
+  --test TEST           Path to test folder
+  --segmentation SEGMENTATION
+                        Path to train_ship_segmentations_v2.csv file
+```
+
+By default, the `scale` is 0.5, so if you wish to obtain better results (but use more memory), set it to 1.
 
 ### Inference model
 
-#### Run model_inference.py
+After training your model and saving its weights to `seg_model_weights.best.hdf5`, you can easily test the output masks on your images via the CLI.
 
-You can adjust model parameters such as the path to the weights of the pretrained model, the path to the images to be predicted, etc. by changing constants in the beginning of the file.
+To predict a single image and save it:
+
+`python model_inference.py -i image.jpg -o output.jpg`
+
+To predict a multiple images and show them without saving them:
+
+`python model_inference.py -i image1.jpg image2.jpg --show --no-save`
+
+```console
+> python predict.py -h
+usage: model_inference.py [-h] [--weights FILE] --input INPUT [INPUT ...] [--output OUTPUT [OUTPUT ...]] [--show]
+                          [--no-save] [--mask-threshold MASK_THRESHOLD] [--scale SCALE]
+
+Predict masks from input images
+
+options:
+  -h, --help            show this help message and exit
+  --weights FILE, -w FILE
+                        Specify the file in which the model weights are stored
+  --input INPUT [INPUT ...], -i INPUT [INPUT ...]
+                        Filenames of input images in current directory
+  --output OUTPUT [OUTPUT ...], -o OUTPUT [OUTPUT ...]
+                        Filenames of output images
+  --show, -v            Visualize the images as they are processed
+  --no-save, -n         Do not save the output masks
+  --scale SCALE, -s SCALE
+                        Scale factor for the input images
+```
+
+You can specify which weights file to use with `--weights seg_model_weights.best.hdf5`.
 
 ## Results
 
