@@ -136,6 +136,10 @@ You can specify which weights file to use with `--weights seg_model_weights.best
 
 ## Results
 
-Use the trained model to do segmentation on test images.
+The model copes well with pictures with good contrast and where there are large obvious ships. Also when there are no shores of piers in the picture, etc.
+
+On the other hand, in pictures where there are a lot of small ships, the model copes poorly. Also, in cases where several ships are nearby, it considers it as one object.
+
+Probably, in order to improve the result, it is worth learning the model on full-size pictures. It is even possible to start learning on lower resolution pictures to reinforce the generalization ability, and then on higher resolution to improve the accuracy of predictions.
 
 ![](./imgs/validation.png)
